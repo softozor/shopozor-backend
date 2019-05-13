@@ -25,7 +25,6 @@ application:
       nodes:
         - nodeGroup: bl
           nodeType: nginx-dockerized
-          tag: 1.14.2
           displayName: Node balancing
           count: 1
           fixedCloudlets: 1
@@ -35,7 +34,6 @@ application:
             SECRET_KEY: ${globals.SECRET_KEY}
         - nodeGroup: cp
           nodeType: apache2-python
-          tag: 2.4.39-python-3.7.3
           displayName: Application servers
           count: 1
           fixedCloudlets: 4
@@ -58,7 +56,6 @@ application:
             PG_USER_PASSWORD: ${globals.PG_USER_PASSWORD}
         - nodeGroup: nosqldb
           nodeType: redis
-          tag: 4.0.11
           displayName: Redis cache
           fixedCloudlets: 1
           cloudlets: 4
