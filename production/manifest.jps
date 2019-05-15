@@ -5,6 +5,8 @@ application:
   name: Shopozor Backend Test API
   version: 0.0
 
+  baseUrl: https://raw.githubusercontent.com/softozor/shopozor-backend/master
+
   globals:
     HOME: /var/www/webroot
     CONTEXT: ROOT
@@ -12,19 +14,21 @@ application:
     PATH_TO_CONTEXT: ${globals.HOME}/${globals.CONTEXT}
     SECRET_KEY: ${fn.uuid}
     PG_USER_PASSWORD: ${fn.password(10)}
+    # TODO: generate random value for the username instead of saleor
     PG_DB_USERNAME: saleor
+    # TODO: generate random value for the db name instead of saleor
     PG_DB_NAME: saleor
+    PG_PASSWORD: ${fn.password(10)}
     REDIS_PASSWORD: ${fn.password(10)}
     PYTHON_VIRTUAL_ENV: env
     PATH_TO_VIRTUAL_ENV: ${globals.HOME}/${globals.PYTHON_VIRTUAL_ENV}
-  
-  baseUrl: https://raw.githubusercontent.com/softozor/shopozor-backend/GIT_BRANCH/
 
   env:
     topology:
       nodes:
         - nodeGroup: bl
           nodeType: nginx-dockerized
+          tag: 1.14.2
           displayName: Node balancing
           count: 1
           fixedCloudlets: 1
@@ -34,6 +38,7 @@ application:
             SECRET_KEY: ${globals.SECRET_KEY}
         - nodeGroup: cp
           nodeType: apache2-python
+          tag: 2.4.39-python-3.7.3
           displayName: Application servers
           count: 1
           fixedCloudlets: 4
@@ -50,12 +55,9 @@ application:
           displayName: PostgreSQL
           fixedCloudlets: 1
           cloudlets: 4
-          env: 
-            PG_DB_NAME: ${globals.PG_DB_NAME}
-            PG_DB_USERNAME: ${globals.PG_DB_USERNAME}
-            PG_USER_PASSWORD: ${globals.PG_USER_PASSWORD}
         - nodeGroup: nosqldb
           nodeType: redis
+          tag: 4.0.11
           displayName: Redis cache
           fixedCloudlets: 1
           cloudlets: 4
@@ -66,8 +68,10 @@ application:
     - deployRepo
     - createVirtualEnv
     - setupJwt
+    - migrateDB
+    - restorePermissions
     - setupWsgi
-    # TODO: close that environment from outside world!
+    - sendEmailWithPasswords
   actions:
     setPasswordOnRedisNode:
       - replaceInFile:
@@ -80,6 +84,7 @@ application:
           - nodeType: redis
     prepareDatabase:
       - setDatabaseUrlEnvVar
+      - createDatabase
     setDatabaseUrlEnvVar:
       - api:
           - method: jelastic.environment.control.AddContainerEnvVars
@@ -88,6 +93,18 @@ application:
               vars:
                 DATABASE_URL: postgres://${globals.PG_DB_USERNAME}:${globals.PG_USER_PASSWORD}@${nodes.sqldb.intIP}:5432/${globals.PG_DB_NAME}
                 CACHE_URL: redis://:${globals.REDIS_PASSWORD}@${nodes.nosqldb.intIP}:6379/0
+    createDatabase:
+      cmd[sqldb]:
+        - jem passwd set -p ${globals.PG_PASSWORD}
+        - export PGPASSWORD='${globals.PG_PASSWORD}'
+        - psql -U webadmin -d postgres -c "CREATE ROLE ${globals.PG_DB_USERNAME} PASSWORD '${globals.PG_USER_PASSWORD}' SUPERUSER CREATEDB CREATEROLE INHERIT LOGIN;"
+        - psql -U webadmin -d postgres -c "CREATE DATABASE ${globals.PG_DB_NAME} OWNER ${globals.PG_DB_USERNAME} ENCODING 'utf-8' TEMPLATE template0;"
+      user: root
+    restorePermissions:
+      - cmd [sqldb]:
+          - export PGPASSWORD='${globals.PG_PASSWORD}'
+          - psql -U webadmin -d postgres -c "ALTER USER ${globals.PG_DB_USERNAME} WITH NOSUPERUSER;"
+        user: root
     deployRepo:
       api:
         - method: environment.vcs.CreateProject
@@ -110,10 +127,16 @@ application:
           - cd ${globals.PATH_TO_CONTEXT}
           - chmod u+x ./scripts/install/*.sh
           - ./scripts/install/install.sh
-          - ./scripts/install/install-dev.sh
+          # - ./scripts/install/install-dev.sh
+    # TODO: setup production data here:
     setupJwt:
       - script: ${baseUrl}/scripts/SetJwtEnvVars.js
         url: https://raw.githubusercontent.com/softozor/shopozor-fixtures/master/Authentication/Credentials/Jwt.json
+    migrateDB:
+      cmd [cp]:
+        - cd ${globals.PATH_TO_CONTEXT}
+        - source ${globals.PATH_TO_VIRTUAL_ENV}/bin/activate
+        - python ./manage.py migrate
     setupWsgi:
       - api:
           - method: environment.file.Delete
@@ -121,9 +144,9 @@ application:
               path: /etc/httpd/conf.d/wsgi.conf
               nodeGroup: cp
       - upload:
-          - sourcePath: ${baseUrl}/e2e/config/wsgi.py
+          - sourcePath: ${baseUrl}/wsgi.py
             destPath: ${globals.PATH_TO_CONTEXT}/wsgi.py
-          - sourcePath: ${baseUrl}/e2e/config/wsgi.conf
+          - sourcePath: ${baseUrl}/wsgi.conf
             destPath: /etc/httpd/conf.d/wsgi.conf
         nodeGroup: cp
       - forEach(nodes.cp):
@@ -131,3 +154,15 @@ application:
           pathToFile: ${globals.PATH_TO_CONTEXT}/wsgi.py
           domainNames: ${env.envName}.hidora.com
           nodeId: ${@i.id}
+      - restartService:
+          nodeGroup: cp
+    sendEmailWithPasswords:
+      return:
+        result: success
+        email: |
+          # PostgreSQL
+          **PostgreSQL URL**: postgres://${globals.PG_DB_USERNAME}:${globals.PG_USER_PASSWORD}@${nodes.sqldb.intIP}:5432/${globals.PG_DB_NAME}
+          # PgAdmin
+          **webadmin**: ${globals.PG_PASSWORD}
+          # Redis    
+          **admin**: ${globals.REDIS_PASSWORD}
