@@ -1,5 +1,6 @@
 # shopozor-backend
 
+
 ## Build statuses
 
 [![Acceptance Build Status](http://shopozor-ci.hidora.com/buildStatus/icon?job=shopozor-backend-acceptance&subject=acceptance%20tests)](http://shopozor-ci.hidora.com/job/shopozor-backend-acceptance/)
